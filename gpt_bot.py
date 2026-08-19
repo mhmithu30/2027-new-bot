@@ -31,6 +31,10 @@ SPEADEARN_ACTIVITY_SEEN_FILE = "speadearn_activity_seen_ids.json"
 
 MISTCOINS_URL = "https://mistcoins.com"
 MISTCOINS_SEEN_FILE = "mistcoins_seen_ids.json"
+
+EARNFLAYER_URL = "https://earnflayer.com/api/getWithdrawAndCompletedOffers"
+EARNFLAYER_COOKIE = os.environ.get("EARNFLAYER_COOKIE")
+EARNFLAYER_SEEN_FILE = "earnflayer_seen_ids.json"
 # -----------------------------
 
 
@@ -491,6 +495,83 @@ def run_mistcoins():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- EARNFLAYER (getWithdrawAndCompletedOffers, cookie-based) ----------------
+def load_earnflayer_seen():
+    try:
+        with open(EARNFLAYER_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_earnflayer_seen(seen_ids):
+    with open(EARNFLAYER_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_earnflayer_offers():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Cookie": EARNFLAYER_COOKIE,
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json",
+    }
+    resp = requests.get(EARNFLAYER_URL, headers=headers, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("combinedData", [])
+
+
+def format_earnflayer_message(item):
+    if item.get("type") == "withdrawal":
+        return None  # cashout, skip
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> EarnFlayer\n"
+        f"🎯 <b>Offer:</b> {item.get('offer_name')}\n"
+        f"🧱 <b>Network:</b> {item.get('partners')}\n"
+        f"💰 <b>Reward:</b> {item.get('reward')} coins"
+    )
+
+
+def run_earnflayer():
+    print("EarnFlayer bot শুরু হয়েছে...")
+    seen_ids = load_earnflayer_seen()
+    while True:
+        try:
+            items = fetch_earnflayer_offers()
+            new_count = 0
+            for item in items:
+                key = f"{item.get('type')}-{item.get('id')}"
+                if key in seen_ids:
+                    continue
+                seen_ids.add(key)
+
+                if item.get("type") == "withdrawal":
+                    continue
+
+                source = (item.get("partners") or "").lower()
+                try:
+                    reward = float(item.get("reward") or 0)
+                except (TypeError, ValueError):
+                    reward = 0
+
+                if "cpx research" in source or "theoremreach" in source:
+                    continue
+                if reward < 500:
+                    continue
+
+                send_telegram_message(format_earnflayer_message(item))
+                new_count += 1
+                time.sleep(1)
+            if new_count:
+                save_earnflayer_seen(seen_ids)
+                print(f"EarnFlayer: {new_count} টা নতুন অফার পাঠানো হয়েছে।")
+        except Exception as e:
+            print("EarnFlayer Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- PAIDCASH (socket.io live) ----------------
 sio = socketio.Client()
 
@@ -560,5 +641,8 @@ if __name__ == "__main__":
 
     t6 = threading.Thread(target=run_mistcoins, daemon=True)
     t6.start()
+
+    t7 = threading.Thread(target=run_earnflayer, daemon=True)
+    t7.start()
 
     run_paidcash()  # main thread এ চলবে
