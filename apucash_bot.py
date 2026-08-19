@@ -2,10 +2,12 @@ import re
 import json
 import time
 import requests
+import os
+
 
 # ---------- CONFIG (এইখানে তোমার তথ্য বসাও) ----------
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID_HERE"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 CHECK_INTERVAL_SECONDS = 60  # কত সেকেন্ড পরপর চেক করবে
 
 APUCASH_URL = "https://apucash.com"
