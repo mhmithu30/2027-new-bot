@@ -2,6 +2,7 @@ import os
 import re
 import json
 import time
+import hashlib
 import threading
 import requests
 import socketio
@@ -35,6 +36,9 @@ MISTCOINS_SEEN_FILE = "mistcoins_seen_ids.json"
 EARNFLAYER_URL = "https://earnflayer.com/api/getWithdrawAndCompletedOffers"
 EARNFLAYER_COOKIE = os.environ.get("EARNFLAYER_COOKIE")
 EARNFLAYER_SEEN_FILE = "earnflayer_seen_ids.json"
+
+HUNTSKIN_URL = "https://huntskin.com/Liveoffersfinal/Live.php"
+HUNTSKIN_SEEN_FILE = "huntskin_seen_ids.json"
 # -----------------------------
 
 
@@ -572,6 +576,87 @@ def run_earnflayer():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- HUNTSKIN (plain HTML table, no login needed) ----------------
+def load_huntskin_seen():
+    try:
+        with open(HUNTSKIN_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_huntskin_seen(seen_ids):
+    with open(HUNTSKIN_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_huntskin_offers():
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    resp = requests.get(HUNTSKIN_URL, headers=headers, timeout=15)
+    resp.raise_for_status()
+    html = resp.text
+
+    rows = re.findall(
+        r"<tr><td data-label='username'>(.*?)</td><td data-label='Points'>(.*?)</td><td data-label='type'>(.*?)</td>",
+        html,
+    )
+
+    offers = []
+    for username, points, type_text in rows:
+        try:
+            points_val = float(points)
+        except ValueError:
+            points_val = 0
+        row_id = hashlib.md5(f"{username}-{points}-{type_text}".encode()).hexdigest()
+        offers.append({
+            "id": row_id,
+            "username": username.strip(),
+            "points": points_val,
+            "detail": type_text.strip(),
+        })
+    return offers
+
+
+def format_huntskin_message(offer):
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> HuntSkin\n"
+        f"🎯 <b>Detail:</b> {offer['detail']}\n"
+        f"💰 <b>Reward:</b> {offer['points']} coins\n"
+        f"👤 <b>User:</b> {offer['username']}"
+    )
+
+
+def run_huntskin():
+    print("HuntSkin bot শুরু হয়েছে...")
+    seen_ids = load_huntskin_seen()
+    while True:
+        try:
+            offers = fetch_huntskin_offers()
+            new_count = 0
+            for offer in offers:
+                oid = offer["id"]
+                if oid in seen_ids:
+                    continue
+                seen_ids.add(oid)
+
+                source = offer["detail"].lower()
+                if "cpx research" in source or "theoremreach" in source:
+                    continue
+                if offer["points"] < 500:
+                    continue
+
+                send_telegram_message(format_huntskin_message(offer))
+                new_count += 1
+                time.sleep(1)
+            if new_count:
+                save_huntskin_seen(seen_ids)
+                print(f"HuntSkin: {new_count} টা নতুন অফার পাঠানো হয়েছে।")
+        except Exception as e:
+            print("HuntSkin Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- PAIDCASH (socket.io live) ----------------
 sio = socketio.Client()
 
@@ -644,5 +729,8 @@ if __name__ == "__main__":
 
     t7 = threading.Thread(target=run_earnflayer, daemon=True)
     t7.start()
+
+    t8 = threading.Thread(target=run_huntskin, daemon=True)
+    t8.start()
 
     run_paidcash()  # main thread এ চলবে
