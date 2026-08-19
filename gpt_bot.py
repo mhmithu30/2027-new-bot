@@ -152,7 +152,10 @@ def run_jjreward():
                 seen_ids.add(oid)
 
                 source = (offer.get("partners") or "").lower()
-                reward = offer.get("reward") or 0
+                try:
+                    reward = float(offer.get("reward") or 0)
+                except (TypeError, ValueError):
+                    reward = 0
 
                 if "cpx research" in source or "theoremreach" in source:
                     continue
