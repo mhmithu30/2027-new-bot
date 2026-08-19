@@ -14,6 +14,10 @@ CHECK_INTERVAL_SECONDS = 60
 APUCASH_URL = "https://apucash.com"
 SEEN_IDS_FILE = "seen_ids.json"
 PAIDCASH_SOCKET_URL = "https://servers.faucetify.io"
+
+JJREWARD_URL = "https://www.jjreward.com/api/getWithdrawAndCompletedOffers"
+JJREWARD_COOKIE = os.environ.get("JJREWARD_COOKIE")
+JJREWARD_SEEN_FILE = "jjreward_seen_ids.json"
 # -----------------------------
 
 
@@ -98,6 +102,74 @@ def run_apucash():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- JJREWARD (polling with cookie) ----------------
+def load_jjreward_seen():
+    try:
+        with open(JJREWARD_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_jjreward_seen(seen_ids):
+    with open(JJREWARD_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_jjreward_offers():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Cookie": JJREWARD_COOKIE,
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    resp = requests.get(JJREWARD_URL, headers=headers, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("completedOffers", [])
+
+
+def format_jjreward_message(offer):
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> JJReward\n"
+        f"🎯 <b>Offer:</b> {offer.get('offer_name')}\n"
+        f"🧱 <b>Network:</b> {offer.get('partners')}\n"
+        f"💰 <b>Reward:</b> {offer.get('reward')} JJ"
+    )
+
+
+def run_jjreward():
+    print("JJReward bot শুরু হয়েছে...")
+    seen_ids = load_jjreward_seen()
+    while True:
+        try:
+            offers = fetch_jjreward_offers()
+            new_count = 0
+            for offer in offers:
+                oid = offer.get("id")
+                if oid in seen_ids:
+                    continue
+                seen_ids.add(oid)
+
+                source = (offer.get("partners") or "").lower()
+                reward = offer.get("reward") or 0
+
+                if "cpx research" in source or "theoremreach" in source:
+                    continue
+                if reward < 500:
+                    continue
+
+                send_telegram_message(format_jjreward_message(offer))
+                new_count += 1
+                time.sleep(1)
+            if new_count:
+                save_jjreward_seen(seen_ids)
+                print(f"JJReward: {new_count} টা নতুন অফার পাঠানো হয়েছে।")
+        except Exception as e:
+            print("JJReward Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- PAIDCASH (socket.io live) ----------------
 sio = socketio.Client()
 
@@ -152,5 +224,8 @@ def run_paidcash():
 if __name__ == "__main__":
     t1 = threading.Thread(target=run_apucash, daemon=True)
     t1.start()
+
+    t2 = threading.Thread(target=run_jjreward, daemon=True)
+    t2.start()
 
     run_paidcash()  # main thread এ চলবে
