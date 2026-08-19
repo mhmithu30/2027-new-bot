@@ -21,6 +21,16 @@ JJREWARD_SEEN_FILE = "jjreward_seen_ids.json"
 
 ZXEARN_URL = "https://zxearn.com"
 ZXEARN_SEEN_FILE = "zxearn_seen_ids.json"
+
+SPEADEARN_URL = "https://speadearn.online/gemiad-offers"
+SPEADEARN_SEEN_FILE = "speadearn_seen_ids.json"
+
+SPEADEARN_ACTIVITY_URL = "https://speadearn.online/recent-activity"
+SPEADEARN_COOKIE = os.environ.get("SPEADEARN_COOKIE")
+SPEADEARN_ACTIVITY_SEEN_FILE = "speadearn_activity_seen_ids.json"
+
+MISTCOINS_URL = "https://mistcoins.com"
+MISTCOINS_SEEN_FILE = "mistcoins_seen_ids.json"
 # -----------------------------
 
 
@@ -256,6 +266,231 @@ def run_zxearn():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- SPEADEARN (gemiad-offers API polling) ----------------
+def load_speadearn_seen():
+    try:
+        with open(SPEADEARN_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_speadearn_seen(seen_ids):
+    with open(SPEADEARN_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_speadearn_offers():
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    resp = requests.get(SPEADEARN_URL, headers=headers, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("success"):
+        return []
+    return data.get("offers", [])
+
+
+def format_speadearn_message(offer):
+    return (
+        f"🚀 <b>NEW OFFER ADDED</b>\n"
+        f"🌐 <b>Website:</b> SpeadEarn\n"
+        f"🎯 <b>Offer:</b> {offer.get('name')}\n"
+        f"🧱 <b>Category:</b> {offer.get('category')}\n"
+        f"💰 <b>Reward:</b> {offer.get('reward')} coins"
+    )
+
+
+def run_speadearn():
+    print("SpeadEarn bot শুরু হয়েছে...")
+    seen_ids = load_speadearn_seen()
+    while True:
+        try:
+            offers = fetch_speadearn_offers()
+            new_count = 0
+            for offer in offers:
+                oid = offer.get("id")
+                if oid in seen_ids:
+                    continue
+                seen_ids.add(oid)
+
+                try:
+                    reward = float(offer.get("reward") or 0)
+                except (TypeError, ValueError):
+                    reward = 0
+                if reward < 500:
+                    continue
+
+                send_telegram_message(format_speadearn_message(offer))
+                new_count += 1
+                time.sleep(1)
+            if new_count:
+                save_speadearn_seen(seen_ids)
+                print(f"SpeadEarn: {new_count} টা নতুন অফার পাঠানো হয়েছে।")
+        except Exception as e:
+            print("SpeadEarn Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
+# ---------------- SPEADEARN ACTIVITY (recent-activity, cookie-based) ----------------
+def load_speadearn_activity_seen():
+    try:
+        with open(SPEADEARN_ACTIVITY_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_speadearn_activity_seen(seen_ids):
+    with open(SPEADEARN_ACTIVITY_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_speadearn_activity():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Cookie": SPEADEARN_COOKIE,
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json",
+    }
+    resp = requests.get(SPEADEARN_ACTIVITY_URL, headers=headers, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    # রেসপন্স স্ট্রাকচার নিশ্চিত না হওয়ায় সম্ভাব্য key গুলো চেক করা হচ্ছে
+    if isinstance(data, list):
+        return data
+    return data.get("data") or data.get("activities") or data.get("recent") or []
+
+
+def format_speadearn_activity_message(item):
+    name = item.get("name") or item.get("user") or item.get("username") or "Unknown"
+    source = item.get("source") or item.get("provider") or item.get("network") or "N/A"
+    amount = item.get("amount") or item.get("coins") or item.get("reward") or 0
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> SpeadEarn\n"
+        f"🎯 <b>Network:</b> {source}\n"
+        f"💰 <b>Reward:</b> {amount} coins\n"
+        f"👤 <b>User:</b> {name}"
+    )
+
+
+def run_speadearn_activity():
+    print("SpeadEarn Activity bot শুরু হয়েছে...")
+    seen_ids = load_speadearn_activity_seen()
+    while True:
+        try:
+            items = fetch_speadearn_activity()
+            new_count = 0
+            for item in items:
+                iid = item.get("id") or json.dumps(item, sort_keys=True)
+                if iid in seen_ids:
+                    continue
+                seen_ids.add(iid)
+
+                try:
+                    amount = float(item.get("amount") or item.get("coins") or item.get("reward") or 0)
+                except (TypeError, ValueError):
+                    amount = 0
+                if amount < 500:
+                    continue
+                # নেগেটিভ (withdrawal) বাদ দেওয়া
+                if amount < 0:
+                    continue
+
+                send_telegram_message(format_speadearn_activity_message(item))
+                new_count += 1
+                time.sleep(1)
+            if new_count:
+                save_speadearn_activity_seen(seen_ids)
+                print(f"SpeadEarn Activity: {new_count} টা নতুন অফার পাঠানো হয়েছে।")
+        except Exception as e:
+            print("SpeadEarn Activity Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
+# ---------------- MISTCOINS (embedded JSON in HTML, no login needed) ----------------
+def load_mistcoins_seen():
+    try:
+        with open(MISTCOINS_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_mistcoins_seen(seen_ids):
+    with open(MISTCOINS_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_mistcoins_activity():
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    resp = requests.get(MISTCOINS_URL, headers=headers, timeout=15)
+    resp.raise_for_status()
+    html = resp.text
+
+    # @click="openDetail({...})" এর ভেতরের JSON অবজেক্টগুলো বের করা
+    matches = re.findall(r'openDetail\((\{.*?\})\)"', html)
+
+    items = []
+    seen_local = set()
+    for raw in matches:
+        try:
+            unescaped = raw.replace("&quot;", '"')
+            data = json.loads(unescaped)
+        except json.JSONDecodeError:
+            continue
+        if data.get("type") != "offer":
+            continue
+        if data["id"] in seen_local:
+            continue
+        seen_local.add(data["id"])
+        items.append(data)
+    return items
+
+
+def format_mistcoins_message(item):
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> MistCoins\n"
+        f"🎯 <b>Offer:</b> {item.get('offer_name')}\n"
+        f"🧱 <b>Network:</b> {item.get('partners')}\n"
+        f"💰 <b>Reward:</b> {item.get('points')} coins\n"
+        f"👤 <b>User:</b> {item.get('user_name')}"
+    )
+
+
+def run_mistcoins():
+    print("MistCoins bot শুরু হয়েছে...")
+    seen_ids = load_mistcoins_seen()
+    while True:
+        try:
+            items = fetch_mistcoins_activity()
+            new_count = 0
+            for item in items:
+                iid = item.get("id")
+                if iid in seen_ids:
+                    continue
+                seen_ids.add(iid)
+
+                source = (item.get("partners") or "").lower()
+                points = item.get("points") or 0
+
+                if "cpx research" in source or "theoremreach" in source:
+                    continue
+                if points < 500:
+                    continue
+
+                send_telegram_message(format_mistcoins_message(item))
+                new_count += 1
+                time.sleep(1)
+            if new_count:
+                save_mistcoins_seen(seen_ids)
+                print(f"MistCoins: {new_count} টা নতুন অফার পাঠানো হয়েছে।")
+        except Exception as e:
+            print("MistCoins Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- PAIDCASH (socket.io live) ----------------
 sio = socketio.Client()
 
@@ -316,5 +551,14 @@ if __name__ == "__main__":
 
     t3 = threading.Thread(target=run_zxearn, daemon=True)
     t3.start()
+
+    t4 = threading.Thread(target=run_speadearn, daemon=True)
+    t4.start()
+
+    t5 = threading.Thread(target=run_speadearn_activity, daemon=True)
+    t5.start()
+
+    t6 = threading.Thread(target=run_mistcoins, daemon=True)
+    t6.start()
 
     run_paidcash()  # main thread এ চলবে
