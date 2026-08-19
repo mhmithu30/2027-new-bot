@@ -82,7 +82,7 @@ def run_apucash():
                 source = (winner.get("source") or "").lower()
                 coins = winner.get("coins") or 0
 
-                if "cpx research" in source:
+                if "cpx research" in source or "theoremreach" in source:
                     continue
                 if coins < 500:
                     continue
@@ -120,7 +120,7 @@ def on_activity(data):
     wall = (data.get("wall") or "").lower()
     coins = data.get("coins") or 0
 
-    if "cpx research" in wall:
+    if "cpx research" in wall or "theoremreach" in wall:
         return
     if coins < 500:
         return
