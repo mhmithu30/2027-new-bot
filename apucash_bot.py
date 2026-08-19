@@ -4,8 +4,8 @@ import time
 import requests
 
 # ---------- CONFIG (এইখানে তোমার তথ্য বসাও) ----------
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-TELEGRAM_CHAT_ID = "YOUR_CHAT_ID_HERE"
+TELEGRAM_BOT_TOKEN = "8617551433:AAFK1waCKiLv72SErBuf4iK0sduSahJONZo"
+TELEGRAM_CHAT_ID = "6881373105"
 CHECK_INTERVAL_SECONDS = 60  # কত সেকেন্ড পরপর চেক করবে
 
 APUCASH_URL = "https://apucash.com"
