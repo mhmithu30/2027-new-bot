@@ -1,1 +1,1 @@
-worker: python apucash_bot.py
+worker: python gpt_bot.py
