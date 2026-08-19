@@ -39,6 +39,10 @@ EARNFLAYER_SEEN_FILE = "earnflayer_seen_ids.json"
 
 HUNTSKIN_URL = "https://huntskin.com/Liveoffersfinal/Live.php"
 HUNTSKIN_SEEN_FILE = "huntskin_seen_ids.json"
+
+GOLDTASKER_URL = "https://goldtasker.com/api/live-offers"
+GOLDTASKER_COOKIE = os.environ.get("GOLDTASKER_COOKIE")
+GOLDTASKER_SEEN_FILE = "goldtasker_seen_ids.json"
 # -----------------------------
 
 
@@ -657,6 +661,82 @@ def run_huntskin():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- GOLDTASKER (live-offers API, cookie-based) ----------------
+def load_goldtasker_seen():
+    try:
+        with open(GOLDTASKER_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_goldtasker_seen(seen_ids):
+    with open(GOLDTASKER_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_goldtasker_offers():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Cookie": GOLDTASKER_COOKIE,
+        "Accept": "application/json",
+    }
+    resp = requests.get(GOLDTASKER_URL, headers=headers, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, list):
+        return data
+    return data.get("data") or data.get("offers") or []
+
+
+def format_goldtasker_message(item):
+    user = item.get("user", {})
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> GoldTasker\n"
+        f"🎯 <b>Offer:</b> {item.get('offerName')}\n"
+        f"🧱 <b>Network:</b> {item.get('offerwallName')}\n"
+        f"💰 <b>Reward:</b> {item.get('reward')} coins\n"
+        f"👤 <b>User:</b> {user.get('name')}"
+    )
+
+
+def run_goldtasker():
+    print("GoldTasker bot শুরু হয়েছে...")
+    seen_ids = load_goldtasker_seen()
+    while True:
+        try:
+            items = fetch_goldtasker_offers()
+            new_count = 0
+            for item in items:
+                key = f"{item.get('offerName')}-{item.get('createdAt')}-{item.get('user', {}).get('name')}"
+                iid = hashlib.md5(key.encode()).hexdigest()
+                if iid in seen_ids:
+                    continue
+                seen_ids.add(iid)
+
+                source = (item.get("offerwallName") or "").lower()
+                try:
+                    reward = float(item.get("reward") or 0)
+                except (TypeError, ValueError):
+                    reward = 0
+
+                if "cpx research" in source or "theoremreach" in source:
+                    continue
+                if reward < 500:
+                    continue
+
+                send_telegram_message(format_goldtasker_message(item))
+                new_count += 1
+                time.sleep(1)
+            if new_count:
+                save_goldtasker_seen(seen_ids)
+                print(f"GoldTasker: {new_count} টা নতুন অফার পাঠানো হয়েছে।")
+        except Exception as e:
+            print("GoldTasker Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- PAIDCASH (socket.io live) ----------------
 sio = socketio.Client()
 
@@ -732,5 +812,8 @@ if __name__ == "__main__":
 
     t8 = threading.Thread(target=run_huntskin, daemon=True)
     t8.start()
+
+    t9 = threading.Thread(target=run_goldtasker, daemon=True)
+    t9.start()
 
     run_paidcash()  # main thread এ চলবে
