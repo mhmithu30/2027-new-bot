@@ -74,11 +74,22 @@ def run_apucash():
             new_count = 0
             for winner in winners:
                 wid = winner.get("id")
-                if wid not in seen_ids:
-                    send_telegram_message(format_apucash_message(winner))
-                    seen_ids.add(wid)
-                    new_count += 1
-                    time.sleep(1)
+                if wid in seen_ids:
+                    continue
+
+                seen_ids.add(wid)  # আগে চেক করা হয়ে গেছে, দ্বিতীয়বার আর দেখাবে না
+
+                source = (winner.get("source") or "").lower()
+                coins = winner.get("coins") or 0
+
+                if "cpx research" in source:
+                    continue
+                if coins < 500:
+                    continue
+
+                send_telegram_message(format_apucash_message(winner))
+                new_count += 1
+                time.sleep(1)
             if new_count:
                 save_seen_ids(seen_ids)
                 print(f"Apucash: {new_count} টা নতুন অফার পাঠানো হয়েছে।")
@@ -103,7 +114,18 @@ def disconnect():
 
 @sio.on("activityFeed")
 def on_activity(data):
-    if data.get("feedType") == "earn":
+    if data.get("feedType") != "earn":
+        return
+
+    wall = (data.get("wall") or "").lower()
+    coins = data.get("coins") or 0
+
+    if "cpx research" in wall:
+        return
+    if coins < 500:
+        return
+
+    if True:
         msg = (
             f"🚀 <b>NEW LIVE LEAD</b>\n"
             f"🌐 <b>Website:</b> PaidCash\n"
