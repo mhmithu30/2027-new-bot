@@ -4,7 +4,7 @@ import time
 import requests
 
 # ---------- CONFIG (এইখানে তোমার তথ্য বসাও) ----------
-TELEGRAM_BOT_TOKEN = "8841879665:AAH8bUpBqEZ-MTbp9jEzbTIIg9LlHLMEcCc"
+TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
 TELEGRAM_CHAT_ID = "YOUR_CHAT_ID_HERE"
 CHECK_INTERVAL_SECONDS = 60  # কত সেকেন্ড পরপর চেক করবে
 
