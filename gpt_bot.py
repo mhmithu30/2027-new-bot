@@ -18,6 +18,9 @@ PAIDCASH_SOCKET_URL = "https://servers.faucetify.io"
 JJREWARD_URL = "https://www.jjreward.com/api/getWithdrawAndCompletedOffers"
 JJREWARD_COOKIE = os.environ.get("JJREWARD_COOKIE")
 JJREWARD_SEEN_FILE = "jjreward_seen_ids.json"
+
+ZXEARN_URL = "https://zxearn.com"
+ZXEARN_SEEN_FILE = "zxearn_seen_ids.json"
 # -----------------------------
 
 
@@ -173,6 +176,86 @@ def run_jjreward():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- ZXEARN (polling, no login needed) ----------------
+def load_zxearn_seen():
+    try:
+        with open(ZXEARN_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_zxearn_seen(seen_ids):
+    with open(ZXEARN_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_zxearn_offers():
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    resp = requests.get(ZXEARN_URL, headers=headers, timeout=15)
+    resp.raise_for_status()
+    html = resp.text
+
+    # প্রতিটা offer card বের করা
+    cards = re.findall(
+        r'data-id="(id-\d+)"[^>]*data-feed-type="offer"[^>]*data-bs-original-title="([^"]*)"',
+        html,
+    )
+
+    offers = []
+    for card_id, tooltip in cards:
+        offername = re.search(r"Offername:\s*([^<]*)</p>", tooltip)
+        network = re.search(r"Name:\s*([^<]*)</p>", tooltip)
+        amount = re.search(r"Amount:\s*([\d.]+)\s*Coins", tooltip)
+        offers.append({
+            "id": card_id,
+            "offername": offername.group(1).strip() if offername else "N/A",
+            "network": network.group(1).strip() if network else "N/A",
+            "amount": float(amount.group(1)) if amount else 0,
+        })
+    return offers
+
+
+def format_zxearn_message(offer):
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> ZxEarn\n"
+        f"🎯 <b>Offer:</b> {offer['offername']}\n"
+        f"🧱 <b>Network:</b> {offer['network']}\n"
+        f"💰 <b>Reward:</b> {offer['amount']} coins"
+    )
+
+
+def run_zxearn():
+    print("ZxEarn bot শুরু হয়েছে...")
+    seen_ids = load_zxearn_seen()
+    while True:
+        try:
+            offers = fetch_zxearn_offers()
+            new_count = 0
+            for offer in offers:
+                oid = offer["id"]
+                if oid in seen_ids:
+                    continue
+                seen_ids.add(oid)
+
+                source = offer["network"].lower()
+                if "cpx research" in source or "theoremreach" in source:
+                    continue
+                if offer["amount"] < 500:
+                    continue
+
+                send_telegram_message(format_zxearn_message(offer))
+                new_count += 1
+                time.sleep(1)
+            if new_count:
+                save_zxearn_seen(seen_ids)
+                print(f"ZxEarn: {new_count} টা নতুন অফার পাঠানো হয়েছে।")
+        except Exception as e:
+            print("ZxEarn Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- PAIDCASH (socket.io live) ----------------
 sio = socketio.Client()
 
@@ -230,5 +313,8 @@ if __name__ == "__main__":
 
     t2 = threading.Thread(target=run_jjreward, daemon=True)
     t2.start()
+
+    t3 = threading.Thread(target=run_zxearn, daemon=True)
+    t3.start()
 
     run_paidcash()  # main thread এ চলবে
