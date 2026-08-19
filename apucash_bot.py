@@ -5,7 +5,7 @@ import requests
 
 # ---------- CONFIG (এইখানে তোমার তথ্য বসাও) ----------
 TELEGRAM_BOT_TOKEN = "8841879665:AAH8bUpBqEZ-MTbp9jEzbTIIg9LlHLMEcCc"
-TELEGRAM_CHAT_ID = "1372247220"
+TELEGRAM_CHAT_ID = "-5345589023"
 CHECK_INTERVAL_SECONDS = 60  # কত সেকেন্ড পরপর চেক করবে
 
 APUCASH_URL = "https://apucash.com"
