@@ -46,12 +46,93 @@ GOLDTASKER_SEEN_FILE = "goldtasker_seen_ids.json"
 # -----------------------------
 
 
+send_lock = threading.Lock()
+last_send_time = 0.0
+MIN_SEND_GAP = 3.2  # Telegram গ্রুপে মিনিটে ~20 মেসেজের লিমিট
+WARMUP_UNTIL = time.time() + 120  # রিস্টার্টের পর প্রথম ২ মিনিট পুরনো অফার পাঠাবে না
+
+
 def send_telegram_message(text):
+    global last_send_time
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
+    with send_lock:
+        for _ in range(4):
+            wait = MIN_SEND_GAP - (time.time() - last_send_time)
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                r = requests.post(url, data=payload, timeout=15)
+            except Exception as e:
+                print("Telegram request error:", e)
+                last_send_time = time.time()
+                return None
+            last_send_time = time.time()
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code == 429:
+                try:
+                    retry = r.json().get("parameters", {}).get("retry_after", 5)
+                except Exception:
+                    retry = 5
+                time.sleep(retry + 1)
+                continue
+            print("Telegram error:", r.text)
+            return None
+    return None
+
+
+def send_lead(text):
+    """নতুন লিড পাঠায়, তবে রিস্টার্টের পর warmup চলাকালীন চুপ থাকে।"""
+    if time.time() < WARMUP_UNTIL:
+        return None
+    return send_telegram_message(text)
+
+
+def pin_telegram_message(message_id):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/pinChatMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "message_id": message_id, "disable_notification": False}
     r = requests.post(url, data=payload, timeout=15)
     if r.status_code != 200:
-        print("Telegram error:", r.text)
+        print("Pin error:", r.text)
+
+
+# সব সাইটের অফার এখানে জমা হবে, ঘণ্টায় একবার চেক হবে
+hourly_offers_lock = threading.Lock()
+hourly_offers = []
+
+
+def track_offer(website, offer_name, reward):
+    with hourly_offers_lock:
+        hourly_offers.append({
+            "website": website,
+            "offer_name": offer_name,
+            "reward": reward,
+        })
+
+
+def run_hourly_top_offer():
+    while True:
+        time.sleep(3600)  # ১ ঘণ্টা
+        with hourly_offers_lock:
+            offers_copy = hourly_offers.copy()
+            hourly_offers.clear()
+
+        if not offers_copy:
+            continue
+
+        top = max(offers_copy, key=lambda x: x["reward"])
+        msg = (
+            f"🏆 <b>HOURLY TOP OFFER</b>\n"
+            f"🌐 <b>Website:</b> {top['website']}\n"
+            f"🎯 <b>Offer:</b> {top['offer_name']}\n"
+            f"💰 <b>Reward:</b> {top['reward']} coins"
+        )
+        result = send_telegram_message(msg)
+        if result and result.get("ok"):
+            message_id = result["result"]["message_id"]
+            pin_telegram_message(message_id)
+            print("Hourly top offer pinned:", top["offer_name"])
 
 
 # ---------------- APUCASH (polling) ----------------
@@ -116,7 +197,8 @@ def run_apucash():
                 if coins < 500:
                     continue
 
-                send_telegram_message(format_apucash_message(winner))
+                track_offer("Apucash", winner.get("source"), coins)
+                send_lead(format_apucash_message(winner))
                 new_count += 1
                 time.sleep(1)
             if new_count:
@@ -187,7 +269,8 @@ def run_jjreward():
                 if reward < 500:
                     continue
 
-                send_telegram_message(format_jjreward_message(offer))
+                track_offer("JJReward", offer.get("offer_name"), reward)
+                send_lead(format_jjreward_message(offer))
                 new_count += 1
                 time.sleep(1)
             if new_count:
@@ -267,7 +350,8 @@ def run_zxearn():
                 if offer["amount"] < 500:
                     continue
 
-                send_telegram_message(format_zxearn_message(offer))
+                track_offer("ZxEarn", offer["offername"], offer["amount"])
+                send_lead(format_zxearn_message(offer))
                 new_count += 1
                 time.sleep(1)
             if new_count:
@@ -332,7 +416,8 @@ def run_speadearn():
                 if reward < 500:
                     continue
 
-                send_telegram_message(format_speadearn_message(offer))
+                track_offer("SpeadEarn", offer.get("name"), reward)
+                send_lead(format_speadearn_message(offer))
                 new_count += 1
                 time.sleep(1)
             if new_count:
@@ -409,7 +494,8 @@ def run_speadearn_activity():
                 if amount < 0:
                     continue
 
-                send_telegram_message(format_speadearn_activity_message(item))
+                track_offer("SpeadEarn Activity", item.get("source") or item.get("provider") or item.get("network") or "N/A", amount)
+                send_lead(format_speadearn_activity_message(item))
                 new_count += 1
                 time.sleep(1)
             if new_count:
@@ -492,7 +578,8 @@ def run_mistcoins():
                 if points < 500:
                     continue
 
-                send_telegram_message(format_mistcoins_message(item))
+                track_offer("MistCoins", item.get("offer_name"), points)
+                send_lead(format_mistcoins_message(item))
                 new_count += 1
                 time.sleep(1)
             if new_count:
@@ -569,7 +656,8 @@ def run_earnflayer():
                 if reward < 500:
                     continue
 
-                send_telegram_message(format_earnflayer_message(item))
+                track_offer("EarnFlayer", item.get("offer_name"), reward)
+                send_lead(format_earnflayer_message(item))
                 new_count += 1
                 time.sleep(1)
             if new_count:
@@ -650,7 +738,8 @@ def run_huntskin():
                 if offer["points"] < 500:
                     continue
 
-                send_telegram_message(format_huntskin_message(offer))
+                track_offer("HuntSkin", offer["detail"], offer["points"])
+                send_lead(format_huntskin_message(offer))
                 new_count += 1
                 time.sleep(1)
             if new_count:
@@ -680,6 +769,8 @@ def fetch_goldtasker_offers():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Cookie": GOLDTASKER_COOKIE,
         "Accept": "application/json",
+        "Referer": "https://goldtasker.com/earn",
+        "Origin": "https://goldtasker.com",
     }
     resp = requests.get(GOLDTASKER_URL, headers=headers, timeout=15)
     resp.raise_for_status()
@@ -726,7 +817,8 @@ def run_goldtasker():
                 if reward < 500:
                     continue
 
-                send_telegram_message(format_goldtasker_message(item))
+                track_offer("GoldTasker", item.get("offerName"), reward)
+                send_lead(format_goldtasker_message(item))
                 new_count += 1
                 time.sleep(1)
             if new_count:
@@ -773,14 +865,24 @@ def on_activity(data):
             f"💰 <b>Reward:</b> {data.get('coins')} coins\n"
             f"👤 <b>User:</b> {data.get('username')}"
         )
-        send_telegram_message(msg)
+        track_offer("PaidCash", data.get("offername"), coins)
+        send_lead(msg)
         print("PaidCash: Sent -", data.get("offername"))
 
 
 def run_paidcash():
     while True:
         try:
-            sio.connect(PAIDCASH_SOCKET_URL, transports=["websocket"])
+            sio.connect(
+                PAIDCASH_SOCKET_URL,
+                transports=["websocket"],
+                headers={
+                    "Origin": "https://paidcash.co",
+                    "Referer": "https://paidcash.co/",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                },
+                wait_timeout=15,
+            )
             sio.wait()
         except Exception as e:
             print("PaidCash Error:", e)
@@ -815,5 +917,8 @@ if __name__ == "__main__":
 
     t9 = threading.Thread(target=run_goldtasker, daemon=True)
     t9.start()
+
+    t10 = threading.Thread(target=run_hourly_top_offer, daemon=True)
+    t10.start()
 
     run_paidcash()  # main thread এ চলবে
