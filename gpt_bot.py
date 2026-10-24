@@ -839,6 +839,11 @@ def connect():
 
 
 @sio.event
+def connect_error(data):
+    print("PaidCash connect_error reason:", data)
+
+
+@sio.event
 def disconnect():
     print("PaidCash disconnected, reconnecting...")
 
@@ -871,22 +876,32 @@ def on_activity(data):
 
 
 def run_paidcash():
+    token = os.environ.get("PAIDCASH_TOKEN")
+    headers = {
+        "Origin": "https://paidcash.co",
+        "Referer": "https://paidcash.co/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    }
+    if token:
+        headers["Authorization"] = token
+    auth = {"token": token} if token else None
     while True:
         try:
             sio.connect(
                 PAIDCASH_SOCKET_URL,
-                transports=["websocket"],
-                headers={
-                    "Origin": "https://paidcash.co",
-                    "Referer": "https://paidcash.co/",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                },
+                transports=["polling", "websocket"],
+                headers=headers,
+                auth=auth,
                 wait_timeout=15,
             )
             sio.wait()
         except Exception as e:
             print("PaidCash Error:", e)
-            time.sleep(5)
+            try:
+                sio.disconnect()
+            except Exception:
+                pass
+            time.sleep(15)
 
 
 # ---------------- MAIN ----------------
