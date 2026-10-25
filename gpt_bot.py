@@ -73,6 +73,15 @@ CRAZYCASH_URL = "https://crazycash.co/get-red-data"
 CRAZYCASH_COOKIE = os.environ.get("CRAZYCASH_COOKIE")  # ঐচ্ছিক
 CRAZYCASH_SEEN_FILE = "crazycash_seen_ids.json"
 CRAZYCASH_MIN = float(os.environ.get("CRAZYCASH_MIN", str(MIN_COINS)))
+# cookie/টোকেনে ভুল করে ঢোকা নতুন লাইন বা বাড়তি স্পেস পরিষ্কার করা
+for _name in (
+    "JJREWARD_COOKIE", "SPEADEARN_COOKIE", "EARNFLAYER_COOKIE", "GOLDTASKER_COOKIE",
+    "LOOTEARN_COOKIE", "MISTCASH_COOKIE", "CLICKERAN_COOKIE", "CRAZYCASH_COOKIE",
+    "ZXAPI_TOKEN", "DOLLARPULL_TOKEN",
+):
+    _v = globals().get(_name)
+    if _v:
+        globals()[_name] = " ".join(_v.split())
 # -----------------------------
 
 
