@@ -58,6 +58,11 @@ MISTCASH_COOKIE = os.environ.get("MISTCASH_COOKIE")
 MISTCASH_SEEN_FILE = "mistcash_seen_ids.json"
 MISTCASH_MIN = float(os.environ.get("MISTCASH_MIN", "500"))
 LOOTEARN_MIN = float(os.environ.get("LOOTEARN_MIN", "500"))
+
+CLICKERAN_URL = "https://clickeran.com/get-red-data"
+CLICKERAN_COOKIE = os.environ.get("CLICKERAN_COOKIE")
+CLICKERAN_SEEN_FILE = "clickeran_seen_ids.json"
+CLICKERAN_MIN = float(os.environ.get("CLICKERAN_MIN", "500"))
 # -----------------------------
 
 
@@ -1301,6 +1306,143 @@ def run_mistcash():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- CLICKERAN (get-red-data, cookie-based) ----------------
+def load_clickeran_seen():
+    try:
+        with open(CLICKERAN_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_clickeran_seen(seen_ids):
+    with open(CLICKERAN_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def _first(item, keys):
+    for k in keys:
+        v = item.get(k)
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def clickeran_fields(item):
+    offer = _first(item, ["offer_name", "offerName", "offer", "title", "name", "task"])
+    network = _first(item, ["partners", "partner", "network", "wall", "offerwall", "source", "provider"])
+    reward = _first(item, ["reward", "points", "amount", "coins", "payout", "payout_points"]) or 0
+    user = _first(item, ["username", "user_name", "user", "userName"])
+    return offer, network, reward, user
+
+
+def fetch_clickeran_items():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Cookie": CLICKERAN_COOKIE,
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json",
+        "Referer": "https://clickeran.com/",
+    }
+    resp = requests.get(CLICKERAN_URL, headers=headers, timeout=20)
+    if resp.status_code != 200:
+        print(
+            "Clickeran DEBUG:", resp.status_code,
+            "server=", resp.headers.get("server"),
+            "cf-mitigated=", resp.headers.get("cf-mitigated"),
+            "body=", resp.text[:200].replace("\n", " "),
+        )
+        resp.raise_for_status()
+    try:
+        data = resp.json()
+    except ValueError:
+        print("Clickeran: JSON নয়, body =", resp.text[:200].replace("\n", " "))
+        return []
+
+    def find_items(node):
+        if isinstance(node, list):
+            if node and isinstance(node[0], dict):
+                return node
+            for x in node:
+                r = find_items(x)
+                if r:
+                    return r
+        elif isinstance(node, dict):
+            found = []
+            for v in node.values():
+                r = find_items(v)
+                if r:
+                    found.extend(r)
+            return found
+        return []
+
+    items = find_items(data)
+    top = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+    sample = json.dumps(items[0], ensure_ascii=False)[:400] if items else None
+    print("Clickeran top-level:", top, "| items:", len(items), "| sample:", sample)
+    return items
+
+
+def format_clickeran_message(item):
+    offer, network, reward, user = clickeran_fields(item)
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> Clickeran\n"
+        f"🎯 <b>Offer:</b> {offer}\n"
+        f"🧱 <b>Network:</b> {network}\n"
+        f"💰 <b>Reward:</b> {reward} coins\n"
+        f"👤 <b>User:</b> {user}"
+    )
+
+
+def run_clickeran():
+    print("Clickeran bot শুরু হয়েছে...")
+    if not CLICKERAN_COOKIE:
+        print("Clickeran: CLICKERAN_COOKIE সেট করা নেই, বন্ধ।")
+        return
+    seen_ids = load_clickeran_seen()
+    while True:
+        try:
+            items = fetch_clickeran_items()
+            new_count = 0
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                raw_id = item.get("id")
+                key = str(raw_id) if raw_id is not None else hashlib.md5(
+                    json.dumps(item, sort_keys=True, ensure_ascii=False).encode()
+                ).hexdigest()
+                if key in seen_ids:
+                    continue
+                seen_ids.add(key)
+
+                offer, network, reward_raw, user = clickeran_fields(item)
+                if not offer:
+                    continue
+                kind = str(item.get("type") or item.get("kind") or "").lower()
+                if "withdraw" in kind or "cash" in kind:
+                    continue
+                try:
+                    reward = float(str(reward_raw).replace(",", ""))
+                except (TypeError, ValueError):
+                    reward = 0
+                blob = f"{offer} {network}".lower()
+                if "cpx" in blob or "theoremreach" in blob:
+                    continue
+                if reward < CLICKERAN_MIN:
+                    continue
+
+                track_offer("Clickeran", offer, reward)
+                send_lead(format_clickeran_message(item))
+                new_count += 1
+            if new_count:
+                save_clickeran_seen(seen_ids)
+                print(f"Clickeran: {new_count} টা নতুন অফার ধরা হয়েছে।")
+        except Exception as e:
+            print("Clickeran Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
     t1 = threading.Thread(target=run_apucash, daemon=True)
@@ -1341,6 +1483,9 @@ if __name__ == "__main__":
 
     t13 = threading.Thread(target=run_mistcash, daemon=True)
     t13.start()
+
+    t14 = threading.Thread(target=run_clickeran, daemon=True)
+    t14.start()
 
     while True:  # main thread জীবিত রাখা
         time.sleep(3600)
