@@ -44,6 +44,10 @@ GOLDTASKER_SEEN_FILE = "goldtasker_seen_ids.json"
 DOLLARPULL_URL = "https://api.dollarpull.com/tracker/activity/recent?limit=50"
 DOLLARPULL_TOKEN = os.environ.get("DOLLARPULL_TOKEN")
 DOLLARPULL_SEEN_FILE = "dollarpull_seen_ids.json"
+
+LOOTEARN_URL = "https://lootearn.com/api/getWithdrawAndCompletedOffers"
+LOOTEARN_COOKIE = os.environ.get("LOOTEARN_COOKIE")
+LOOTEARN_SEEN_FILE = "lootearn_seen_ids.json"
 # -----------------------------
 
 
@@ -953,6 +957,116 @@ def run_dollarpull():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- LOOTEARN (getWithdrawAndCompletedOffers, cookie-based) ----------------
+def load_lootearn_seen():
+    try:
+        with open(LOOTEARN_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_lootearn_seen(seen_ids):
+    with open(LOOTEARN_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_lootearn_offers():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Cookie": LOOTEARN_COOKIE,
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json",
+        "Referer": "https://lootearn.com/earn",
+    }
+    resp = requests.get(LOOTEARN_URL, headers=headers, timeout=20)
+    if resp.status_code != 200:
+        print(
+            "LootEarn DEBUG:", resp.status_code,
+            "server=", resp.headers.get("server"),
+            "cf-mitigated=", resp.headers.get("cf-mitigated"),
+            "body=", resp.text[:300].replace("\n", " "),
+        )
+        resp.raise_for_status()
+    data = resp.json()
+
+    def find_items(node):
+        if isinstance(node, list):
+            if node and isinstance(node[0], dict) and "offer_name" in node[0]:
+                return node
+            for x in node:
+                r = find_items(x)
+                if r:
+                    return r
+        elif isinstance(node, dict):
+            # একই ধরনের একাধিক লিস্ট থাকলে সবগুলো জোড়া দেওয়া
+            found = []
+            for v in node.values():
+                r = find_items(v)
+                if r:
+                    found.extend(r)
+            return found
+        return []
+
+    items = find_items(data)
+    if not items:
+        top = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+        print("LootEarn: অফার লিস্ট পাওয়া যায়নি, top-level =", top)
+    return items
+
+
+def format_lootearn_message(item):
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> LootEarn\n"
+        f"🎯 <b>Offer:</b> {item.get('offer_name')}\n"
+        f"🧱 <b>Network:</b> {item.get('partners')}\n"
+        f"💰 <b>Reward:</b> {item.get('reward')} coins"
+    )
+
+
+def run_lootearn():
+    print("LootEarn bot শুরু হয়েছে...")
+    if not LOOTEARN_COOKIE:
+        print("LootEarn: LOOTEARN_COOKIE সেট করা নেই, বন্ধ।")
+        return
+    seen_ids = load_lootearn_seen()
+    while True:
+        try:
+            items = fetch_lootearn_offers()
+            print(f"LootEarn check: {len(items)} items")
+            new_count = 0
+            for item in items:
+                key = f"{item.get('type')}-{item.get('id')}-{item.get('offer_name')}"
+                if key in seen_ids:
+                    continue
+                seen_ids.add(key)
+
+                if item.get("type") == "withdrawal" or not item.get("offer_name"):
+                    continue
+                network = (item.get("partners") or "").lower()
+                offer = (item.get("offer_name") or "").lower()
+                try:
+                    reward = float(item.get("reward") or 0)
+                except (TypeError, ValueError):
+                    reward = 0
+
+                if "cpx" in network or "theoremreach" in network or "cpx research" in offer or "theoremreach" in offer:
+                    continue
+                if reward < 500:
+                    continue
+
+                track_offer("LootEarn", item.get("offer_name"), reward)
+                send_lead(format_lootearn_message(item))
+                new_count += 1
+            if new_count:
+                save_lootearn_seen(seen_ids)
+                print(f"LootEarn: {new_count} টা নতুন অফার ধরা হয়েছে।")
+        except Exception as e:
+            print("LootEarn Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
     t1 = threading.Thread(target=run_apucash, daemon=True)
@@ -987,6 +1101,9 @@ if __name__ == "__main__":
 
     t11 = threading.Thread(target=run_dollarpull, daemon=True)
     t11.start()
+
+    t12 = threading.Thread(target=run_lootearn, daemon=True)
+    t12.start()
 
     while True:  # main thread জীবিত রাখা
         time.sleep(3600)
