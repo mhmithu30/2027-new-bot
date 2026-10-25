@@ -63,6 +63,10 @@ CLICKERAN_URL = "https://clickeran.com/get-red-data"
 CLICKERAN_COOKIE = os.environ.get("CLICKERAN_COOKIE")
 CLICKERAN_SEEN_FILE = "clickeran_seen_ids.json"
 CLICKERAN_MIN = float(os.environ.get("CLICKERAN_MIN", "500"))
+
+BOUNTYCASH_URL = "https://bountycash.co/earn"
+BOUNTYCASH_SEEN_FILE = "bountycash_seen_ids.json"
+BOUNTYCASH_MIN = float(os.environ.get("BOUNTYCASH_MIN", "500"))
 # -----------------------------
 
 
@@ -1450,6 +1454,103 @@ def run_clickeran():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- BOUNTYCASH (embedded Inertia JSON, no login needed) ----------------
+def load_bountycash_seen():
+    try:
+        with open(BOUNTYCASH_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_bountycash_seen(seen_ids):
+    with open(BOUNTYCASH_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_bountycash_winners():
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    resp = requests.get(BOUNTYCASH_URL, headers=headers, timeout=20)
+    if resp.status_code != 200:
+        print(
+            "BountyCash DEBUG:", resp.status_code,
+            "server=", resp.headers.get("server"),
+            "cf-mitigated=", resp.headers.get("cf-mitigated"),
+            "body=", resp.text[:200].replace("\n", " "),
+        )
+        resp.raise_for_status()
+    match = re.search(
+        r'<script data-page="app" type="application/json">(.*?)</script>',
+        resp.text,
+        re.DOTALL,
+    )
+    if not match:
+        print("BountyCash: data-page JSON পাওয়া যায়নি")
+        return []
+    data = json.loads(match.group(1))
+    return data.get("props", {}).get("recentWinners", [])
+
+
+def split_bountycash_source(source):
+    # "Adloot – [SOI-Sweeps] US ..." → (network, offer)
+    for sep in (" \u2013 ", " - "):
+        if sep in source:
+            net, off = source.split(sep, 1)
+            return net.strip(), off.strip()
+    return "N/A", source.strip()
+
+
+def format_bountycash_message(item):
+    network, offer = split_bountycash_source(item.get("source") or "")
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> BountyCash\n"
+        f"🎯 <b>Offer:</b> {offer}\n"
+        f"🧱 <b>Network:</b> {network}\n"
+        f"💰 <b>Reward:</b> {item.get('coins')} coins\n"
+        f"👤 <b>User:</b> {item.get('name')}\n"
+        f"⏰ <b>Time:</b> {(item.get('tooltip') or {}).get('time')}"
+    )
+
+
+def run_bountycash():
+    print("BountyCash bot শুরু হয়েছে...")
+    seen_ids = load_bountycash_seen()
+    while True:
+        try:
+            winners = fetch_bountycash_winners()
+            print(f"BountyCash check: {len(winners)} items, newest id {max((w.get('id') or 0) for w in winners) if winners else None}")
+            new_count = 0
+            for w in winners:
+                wid = str(w.get("id"))
+                if wid in seen_ids:
+                    continue
+                seen_ids.add(wid)
+
+                if (w.get("source_label") or "").lower() != "offer":
+                    continue  # streak/bonus ইত্যাদি বাদ
+                source = (w.get("source") or "").lower()
+                try:
+                    coins = float(w.get("coins") or 0)
+                except (TypeError, ValueError):
+                    coins = 0
+                if "cpx" in source or "theoremreach" in source:
+                    continue
+                if coins < BOUNTYCASH_MIN:
+                    continue
+
+                network, offer = split_bountycash_source(w.get("source") or "")
+                track_offer("BountyCash", offer, coins)
+                send_lead(format_bountycash_message(w))
+                new_count += 1
+            if new_count:
+                save_bountycash_seen(seen_ids)
+                print(f"BountyCash: {new_count} টা নতুন অফার ধরা হয়েছে।")
+        except Exception as e:
+            print("BountyCash Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
     t1 = threading.Thread(target=run_apucash, daemon=True)
@@ -1493,6 +1594,9 @@ if __name__ == "__main__":
 
     t14 = threading.Thread(target=run_clickeran, daemon=True)
     t14.start()
+
+    t15 = threading.Thread(target=run_bountycash, daemon=True)
+    t15.start()
 
     while True:  # main thread জীবিত রাখা
         time.sleep(3600)
