@@ -67,6 +67,11 @@ CLICKERAN_MIN = float(os.environ.get("CLICKERAN_MIN", "500"))
 BOUNTYCASH_URL = "https://bountycash.co/earn"
 BOUNTYCASH_SEEN_FILE = "bountycash_seen_ids.json"
 BOUNTYCASH_MIN = float(os.environ.get("BOUNTYCASH_MIN", "500"))
+
+CRAZYCASH_URL = "https://crazycash.co/get-red-data"
+CRAZYCASH_COOKIE = os.environ.get("CRAZYCASH_COOKIE")  # ঐচ্ছিক
+CRAZYCASH_SEEN_FILE = "crazycash_seen_ids.json"
+CRAZYCASH_MIN = float(os.environ.get("CRAZYCASH_MIN", "500"))
 # -----------------------------
 
 
@@ -1551,6 +1556,81 @@ def run_bountycash():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- GET-RED-DATA টাইপ সাইট (CrazyCash) ----------------
+def run_getred_site(site, url, referer, cookie, minimum, seen_file):
+    print(f"{site} bot শুরু হয়েছে...")
+    try:
+        with open(seen_file, "r") as f:
+            seen_ids = set(json.load(f))
+    except FileNotFoundError:
+        seen_ids = set()
+
+    while True:
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json",
+                "Referer": referer,
+            }
+            if cookie:
+                headers["Cookie"] = cookie
+            resp = requests.get(url, headers=headers, timeout=20)
+            if resp.status_code != 200:
+                print(
+                    f"{site} DEBUG:", resp.status_code,
+                    "server=", resp.headers.get("server"),
+                    "cf-mitigated=", resp.headers.get("cf-mitigated"),
+                    "body=", resp.text[:200].replace("\n", " "),
+                )
+                resp.raise_for_status()
+            data = resp.json()
+            items = data if isinstance(data, list) else (data.get("data") or [])
+            print(f"{site} check: {len(items)} items")
+
+            new_count = 0
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                key = f"{item.get('feed_type')}-{item.get('id')}"
+                if key in seen_ids:
+                    continue
+                seen_ids.add(key)
+
+                if (item.get("feed_type") or "").lower() != "offer":
+                    continue  # cashout ইত্যাদি বাদ
+                offer, network, reward_raw, user = clickeran_fields(item)
+                if not offer:
+                    continue
+                try:
+                    reward = float(str(reward_raw).replace(",", ""))
+                except (TypeError, ValueError):
+                    reward = 0
+                blob = f"{offer} {network}".lower()
+                if "cpx" in blob or "theoremreach" in blob:
+                    continue
+                if reward < minimum:
+                    continue
+
+                track_offer(site, offer, reward)
+                send_lead(
+                    f"🚀 <b>NEW LIVE LEAD</b>\n"
+                    f"🌐 <b>Website:</b> {site}\n"
+                    f"🎯 <b>Offer:</b> {offer}\n"
+                    f"🧱 <b>Network:</b> {network}\n"
+                    f"💰 <b>Reward:</b> {reward_raw} coins\n"
+                    f"👤 <b>User:</b> {user}"
+                )
+                new_count += 1
+            if new_count:
+                with open(seen_file, "w") as f:
+                    json.dump(list(seen_ids), f)
+                print(f"{site}: {new_count} টা নতুন অফার ধরা হয়েছে।")
+        except Exception as e:
+            print(f"{site} Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
     t1 = threading.Thread(target=run_apucash, daemon=True)
@@ -1597,6 +1677,13 @@ if __name__ == "__main__":
 
     t15 = threading.Thread(target=run_bountycash, daemon=True)
     t15.start()
+
+    t16 = threading.Thread(
+        target=run_getred_site,
+        args=("CrazyCash", CRAZYCASH_URL, "https://crazycash.co/earn", CRAZYCASH_COOKIE, CRAZYCASH_MIN, CRAZYCASH_SEEN_FILE),
+        daemon=True,
+    )
+    t16.start()
 
     while True:  # main thread জীবিত রাখা
         time.sleep(3600)
