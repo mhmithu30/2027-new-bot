@@ -41,6 +41,9 @@ HUNTSKIN_SEEN_FILE = "huntskin_seen_ids.json"
 GOLDTASKER_URL = "https://goldtasker.com/api/live-offers"
 GOLDTASKER_COOKIE = os.environ.get("GOLDTASKER_COOKIE")
 GOLDTASKER_SEEN_FILE = "goldtasker_seen_ids.json"
+DOLLARPULL_URL = "https://api.dollarpull.com/tracker/activity/recent?limit=50"
+DOLLARPULL_TOKEN = os.environ.get("DOLLARPULL_TOKEN")
+DOLLARPULL_SEEN_FILE = "dollarpull_seen_ids.json"
 # -----------------------------
 
 
@@ -841,6 +844,98 @@ def run_goldtasker():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- DOLLARPULL (api, bearer token) ----------------
+def load_dollarpull_seen():
+    try:
+        with open(DOLLARPULL_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_dollarpull_seen(seen_ids):
+    with open(DOLLARPULL_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_dollarpull_offers():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Authorization": f"Bearer {DOLLARPULL_TOKEN}",
+        "Accept": "application/json",
+        "Origin": "https://www.dollarpull.com",
+        "Referer": "https://www.dollarpull.com/dashboard",
+    }
+    resp = requests.get(DOLLARPULL_URL, headers=headers, timeout=20)
+    if resp.status_code != 200:
+        print(
+            "DollarPull DEBUG:", resp.status_code,
+            "server=", resp.headers.get("server"),
+            "cf-mitigated=", resp.headers.get("cf-mitigated"),
+            "body=", resp.text[:150].replace("\n", " "),
+        )
+        resp.raise_for_status()
+    data = resp.json()
+    if isinstance(data, list):
+        return data
+    for key in ("data", "activities", "items", "results"):
+        if isinstance(data.get(key), list):
+            return data[key]
+    return []
+
+
+def format_dollarpull_message(item):
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> DollarPull\n"
+        f"🎯 <b>Offer:</b> {item.get('offerName')}\n"
+        f"🧱 <b>Network:</b> {item.get('name')}\n"
+        f"💰 <b>Reward:</b> {item.get('amount')} coins\n"
+        f"👤 <b>User:</b> {item.get('userName')}"
+    )
+
+
+def run_dollarpull():
+    print("DollarPull bot শুরু হয়েছে...")
+    if not DOLLARPULL_TOKEN:
+        print("DollarPull: DOLLARPULL_TOKEN সেট করা নেই, বন্ধ।")
+        return
+    seen_ids = load_dollarpull_seen()
+    while True:
+        try:
+            items = fetch_dollarpull_offers()
+            new_count = 0
+            for item in items:
+                iid = str(item.get("id"))
+                if iid in seen_ids:
+                    continue
+                seen_ids.add(iid)
+
+                if item.get("type") != "offer":
+                    continue
+                network = (item.get("name") or "").lower()
+                offer = (item.get("offerName") or "").lower()
+                try:
+                    amount = float(item.get("amount") or 0)
+                except (TypeError, ValueError):
+                    amount = 0
+
+                if "cpx" in network or "cpx research" in offer or "theoremreach" in network or "theoremreach" in offer:
+                    continue
+                if amount < 500:
+                    continue
+
+                track_offer("DollarPull", item.get("offerName"), amount)
+                send_lead(format_dollarpull_message(item))
+                new_count += 1
+            if new_count:
+                save_dollarpull_seen(seen_ids)
+                print(f"DollarPull: {new_count} টা নতুন অফার পাঠানো হয়েছে।")
+        except Exception as e:
+            print("DollarPull Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
     t1 = threading.Thread(target=run_apucash, daemon=True)
@@ -872,6 +967,9 @@ if __name__ == "__main__":
 
     t10 = threading.Thread(target=run_hourly_top_offer, daemon=True)
     t10.start()
+
+    t11 = threading.Thread(target=run_dollarpull, daemon=True)
+    t11.start()
 
     while True:  # main thread জীবিত রাখা
         time.sleep(3600)
