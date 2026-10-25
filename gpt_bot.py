@@ -52,6 +52,12 @@ LOOTEARN_SEEN_FILE = "lootearn_seen_ids.json"
 ZXAPI_URL = "https://zxearn.com/api/v1/public/live-activity"
 ZXAPI_TOKEN = os.environ.get("ZXEARN_TOKEN")
 ZXAPI_SEEN_FILE = "zxearn_api_seen_ids.json"
+
+MISTCASH_URL = "https://mistcash.co/api/getWithdrawAndCompletedOffers"
+MISTCASH_COOKIE = os.environ.get("MISTCASH_COOKIE")
+MISTCASH_SEEN_FILE = "mistcash_seen_ids.json"
+MISTCASH_MIN = float(os.environ.get("MISTCASH_MIN", "500"))
+LOOTEARN_MIN = float(os.environ.get("LOOTEARN_MIN", "500"))
 # -----------------------------
 
 
@@ -1084,7 +1090,7 @@ def run_lootearn():
 
                 if "cpx" in network or "theoremreach" in network or "cpx research" in offer or "theoremreach" in offer:
                     continue
-                if reward < 500:
+                if reward < LOOTEARN_MIN:
                     continue
 
                 track_offer("LootEarn", offer_raw, reward)
@@ -1204,6 +1210,97 @@ def run_zxearn_api():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- MISTCASH (getWithdrawAndCompletedOffers, cookie-based) ----------------
+def load_mistcash_seen():
+    try:
+        with open(MISTCASH_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_mistcash_seen(seen_ids):
+    with open(MISTCASH_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_mistcash_offers():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Cookie": MISTCASH_COOKIE,
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json",
+        "Referer": "https://mistcash.co/earn",
+    }
+    resp = requests.get(MISTCASH_URL, headers=headers, timeout=20)
+    if resp.status_code != 200:
+        print(
+            "MistCash DEBUG:", resp.status_code,
+            "server=", resp.headers.get("server"),
+            "cf-mitigated=", resp.headers.get("cf-mitigated"),
+            "body=", resp.text[:200].replace("\n", " "),
+        )
+        resp.raise_for_status()
+    data = resp.json()
+    items = data.get("combinedData", []) if isinstance(data, dict) else []
+    if not items:
+        top = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+        print("MistCash: লিস্ট খালি, top-level =", top)
+    return items
+
+
+def format_mistcash_message(item):
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> MistCash\n"
+        f"🎯 <b>Offer:</b> {item.get('offer_name')}\n"
+        f"🧱 <b>Network:</b> {item.get('partners')}\n"
+        f"💰 <b>Reward:</b> {item.get('reward')} coins"
+    )
+
+
+def run_mistcash():
+    print("MistCash bot শুরু হয়েছে...")
+    if not MISTCASH_COOKIE:
+        print("MistCash: MISTCASH_COOKIE সেট করা নেই, বন্ধ।")
+        return
+    seen_ids = load_mistcash_seen()
+    while True:
+        try:
+            items = fetch_mistcash_offers()
+            print(f"MistCash check: {len(items)} items")
+            new_count = 0
+            for item in items:
+                key = f"{item.get('type')}-{item.get('id')}"
+                if key in seen_ids:
+                    continue
+                seen_ids.add(key)
+
+                if item.get("type") == "withdrawal" or not item.get("offer_name"):
+                    continue
+                network = (item.get("partners") or "").lower()
+                offer = (item.get("offer_name") or "").lower()
+                try:
+                    reward = float(item.get("reward") or 0)
+                except (TypeError, ValueError):
+                    reward = 0
+
+                if "cpx" in network or "theoremreach" in network or "cpx research" in offer or "theoremreach" in offer:
+                    continue
+                if reward < MISTCASH_MIN:
+                    continue
+
+                track_offer("MistCash", item.get("offer_name"), reward)
+                send_lead(format_mistcash_message(item))
+                new_count += 1
+            if new_count:
+                save_mistcash_seen(seen_ids)
+                print(f"MistCash: {new_count} টা নতুন অফার ধরা হয়েছে।")
+        except Exception as e:
+            print("MistCash Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
     t1 = threading.Thread(target=run_apucash, daemon=True)
@@ -1241,6 +1338,9 @@ if __name__ == "__main__":
 
     t12 = threading.Thread(target=run_lootearn, daemon=True)
     t12.start()
+
+    t13 = threading.Thread(target=run_mistcash, daemon=True)
+    t13.start()
 
     while True:  # main thread জীবিত রাখা
         time.sleep(3600)
