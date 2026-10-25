@@ -10,6 +10,7 @@ import requests
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 CHECK_INTERVAL_SECONDS = 60
+MIN_COINS = float(os.environ.get("MIN_COINS", "150"))  # সব সাইটের সর্বনিম্ন coin সীমা
 
 APUCASH_URL = "https://apucash.com"
 SEEN_IDS_FILE = "seen_ids.json"
@@ -56,22 +57,22 @@ ZXAPI_SEEN_FILE = "zxearn_api_seen_ids.json"
 MISTCASH_URL = "https://mistcash.co/api/getWithdrawAndCompletedOffers"
 MISTCASH_COOKIE = os.environ.get("MISTCASH_COOKIE")
 MISTCASH_SEEN_FILE = "mistcash_seen_ids.json"
-MISTCASH_MIN = float(os.environ.get("MISTCASH_MIN", "500"))
-LOOTEARN_MIN = float(os.environ.get("LOOTEARN_MIN", "500"))
+MISTCASH_MIN = float(os.environ.get("MISTCASH_MIN", str(MIN_COINS)))
+LOOTEARN_MIN = float(os.environ.get("LOOTEARN_MIN", str(MIN_COINS)))
 
 CLICKERAN_URL = "https://clickeran.com/get-red-data"
 CLICKERAN_COOKIE = os.environ.get("CLICKERAN_COOKIE")
 CLICKERAN_SEEN_FILE = "clickeran_seen_ids.json"
-CLICKERAN_MIN = float(os.environ.get("CLICKERAN_MIN", "500"))
+CLICKERAN_MIN = float(os.environ.get("CLICKERAN_MIN", str(MIN_COINS)))
 
 BOUNTYCASH_URL = "https://bountycash.co/earn"
 BOUNTYCASH_SEEN_FILE = "bountycash_seen_ids.json"
-BOUNTYCASH_MIN = float(os.environ.get("BOUNTYCASH_MIN", "500"))
+BOUNTYCASH_MIN = float(os.environ.get("BOUNTYCASH_MIN", str(MIN_COINS)))
 
 CRAZYCASH_URL = "https://crazycash.co/get-red-data"
 CRAZYCASH_COOKIE = os.environ.get("CRAZYCASH_COOKIE")  # ঐচ্ছিক
 CRAZYCASH_SEEN_FILE = "crazycash_seen_ids.json"
-CRAZYCASH_MIN = float(os.environ.get("CRAZYCASH_MIN", "500"))
+CRAZYCASH_MIN = float(os.environ.get("CRAZYCASH_MIN", str(MIN_COINS)))
 # -----------------------------
 
 
@@ -223,7 +224,7 @@ def run_apucash():
 
                 if "cpx research" in source or "theoremreach" in source:
                     continue
-                if coins < 500:
+                if coins < MIN_COINS:
                     continue
 
                 track_offer("Apucash", winner.get("source"), coins)
@@ -295,7 +296,7 @@ def run_jjreward():
 
                 if "cpx research" in source or "theoremreach" in source:
                     continue
-                if reward < 500:
+                if reward < MIN_COINS:
                     continue
 
                 track_offer("JJReward", offer.get("offer_name"), reward)
@@ -376,7 +377,7 @@ def run_zxearn():
                 source = offer["network"].lower()
                 if "cpx research" in source or "theoremreach" in source:
                     continue
-                if offer["amount"] < 500:
+                if offer["amount"] < MIN_COINS:
                     continue
 
                 track_offer("ZxEarn", offer["offername"], offer["amount"])
@@ -442,7 +443,7 @@ def run_speadearn():
                     reward = float(offer.get("reward") or 0)
                 except (TypeError, ValueError):
                     reward = 0
-                if reward < 500:
+                if reward < MIN_COINS:
                     continue
 
                 track_offer("SpeadEarn", offer.get("name"), reward)
@@ -517,7 +518,7 @@ def run_speadearn_activity():
                     amount = float(item.get("amount") or item.get("coins") or item.get("reward") or 0)
                 except (TypeError, ValueError):
                     amount = 0
-                if amount < 500:
+                if amount < MIN_COINS:
                     continue
                 # নেগেটিভ (withdrawal) বাদ দেওয়া
                 if amount < 0:
@@ -607,7 +608,7 @@ def run_mistcoins():
 
                 if "cpx research" in source or "theoremreach" in source:
                     continue
-                if points < 500:
+                if points < MIN_COINS:
                     continue
 
                 track_offer("MistCoins", item.get("offer_name"), points)
@@ -685,7 +686,7 @@ def run_earnflayer():
 
                 if "cpx research" in source or "theoremreach" in source:
                     continue
-                if reward < 500:
+                if reward < MIN_COINS:
                     continue
 
                 track_offer("EarnFlayer", item.get("offer_name"), reward)
@@ -767,7 +768,7 @@ def run_huntskin():
                 source = offer["detail"].lower()
                 if "cpx research" in source or "theoremreach" in source:
                     continue
-                if offer["points"] < 500:
+                if offer["points"] < MIN_COINS:
                     continue
 
                 track_offer("HuntSkin", offer["detail"], offer["points"])
@@ -857,7 +858,7 @@ def run_goldtasker():
 
                 if "cpx research" in source or "theoremreach" in source:
                     continue
-                if reward < 500:
+                if reward < MIN_COINS:
                     continue
 
                 track_offer("GoldTasker", item.get("offerName"), reward)
@@ -967,7 +968,7 @@ def run_dollarpull():
 
                 if "cpx" in network or "cpx research" in offer or "theoremreach" in network or "theoremreach" in offer:
                     continue
-                if amount < 500:
+                if amount < MIN_COINS:
                     continue
 
                 track_offer("DollarPull", item.get("offerName"), amount)
@@ -1210,7 +1211,7 @@ def run_zxearn_api():
 
                 if "cpx" in source or "cpx" in title or "theoremreach" in source or "theoremreach" in title:
                     continue
-                if points < 500:
+                if points < MIN_COINS:
                     continue
 
                 track_offer("ZxEarn", item.get("offer_title"), points)
