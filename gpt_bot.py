@@ -872,7 +872,7 @@ def fetch_dollarpull_offers():
             "DollarPull DEBUG:", resp.status_code,
             "server=", resp.headers.get("server"),
             "cf-mitigated=", resp.headers.get("cf-mitigated"),
-            "body=", resp.text[:150].replace("\n", " "),
+            "body=", resp.text[:600].replace("\n", " "),
         )
         resp.raise_for_status()
     data = resp.json()
