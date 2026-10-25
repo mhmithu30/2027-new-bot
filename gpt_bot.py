@@ -1015,7 +1015,8 @@ def fetch_lootearn_offers():
         items = find_items(data)
     if items:
         first = items[0] if isinstance(items[0], dict) else {}
-        print("LootEarn sample keys:", list(first.keys()), "| first type:", first.get("type"))
+        offer_sample = next((i for i in items if isinstance(i, dict) and i.get("type") != "withdrawal"), None)
+        print("LootEarn offer sample:", offer_sample)
     else:
         top = list(data.keys()) if isinstance(data, dict) else type(data).__name__
         print("LootEarn: লিস্ট খালি/পাওয়া যায়নি, top-level =", top)
