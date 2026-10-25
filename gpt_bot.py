@@ -5,6 +5,8 @@ import time
 import hashlib
 import threading
 import requests
+from collections import deque
+from datetime import datetime, timezone, timedelta
 
 # ---------- CONFIG ----------
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -121,8 +123,24 @@ def send_telegram_message(text):
     return None
 
 
+# প্রতি সাইটের শেষ ১০টা অফার (বাটনে চাপ দিলে দেখাবে)
+site_history = {}
+history_lock = threading.Lock()
+
+
+def record_history(text):
+    m = re.search(r"Website:</b>\s*([^\n]+)", text)
+    if not m:
+        return
+    site = m.group(1).strip()
+    with history_lock:
+        dq = site_history.setdefault(site, deque(maxlen=10))
+        dq.append((time.time(), text))
+
+
 def send_lead(text):
     """নতুন লিড পাঠায়, তবে রিস্টার্টের পর warmup চলাকালীন চুপ থাকে।"""
+    record_history(text)
     if time.time() < WARMUP_UNTIL:
         return None
     return send_telegram_message(text)
@@ -1641,8 +1659,114 @@ def run_getred_site(site, url, referer, cookie, minimum, seen_file):
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- MENU BUTTONS (শেষ ১০ অফার) ----------------
+MENU_SITES = [
+    "Apucash", "JJReward", "ZxEarn", "MistCoins", "EarnFlayer", "HuntSkin",
+    "DollarPull", "LootEarn", "MistCash", "Clickeran", "BountyCash", "CrazyCash",
+]
+BD_TZ = timezone(timedelta(hours=6))
+
+
+def tg_api(method, payload):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+    try:
+        r = requests.post(url, json=payload, timeout=40)
+        return r.json()
+    except Exception as e:
+        print(f"Telegram {method} error:", e)
+        return None
+
+
+def menu_markup():
+    rows = []
+    for i in range(0, len(MENU_SITES), 2):
+        rows.append([
+            {"text": f"🌐 {name}", "callback_data": f"s:{i + j}"}
+            for j, name in enumerate(MENU_SITES[i:i + 2])
+        ])
+    return {"inline_keyboard": rows}
+
+
+MENU_TEXT = "📋 <b>কোন সাইটের শেষ ১০টা অফার দেখবে?</b>\nবাটনে চাপ দাও 👇"
+
+
+def site_history_text(site):
+    with history_lock:
+        items = list(site_history.get(site, []))
+    if not items:
+        return f"🌐 <b>{site}</b>\n\nএখনো কোনো অফার জমা হয়নি।"
+    parts = [f"📋 <b>{site} — শেষ {len(items)}টা অফার</b>"]
+    for ts, text in reversed(items):  # নতুন আগে
+        body = text.split("\n", 1)[1] if text.startswith("🚀") else text
+        body = "\n".join(l for l in body.split("\n") if "Website:" not in l)
+        t = datetime.fromtimestamp(ts, BD_TZ).strftime("%H:%M")
+        parts.append(f"🕒 {t}\n{body}")
+    out = "\n━━━━━━━━━━\n".join(parts)
+    return out[:4000]
+
+
+def run_menu_bot():
+    """/start বা /menu লিখলে বাটন মেনু দেখায়; বাটনে চাপলে ওই সাইটের শেষ ১০ অফার দেখায়।"""
+    tg_api("deleteWebhook", {"drop_pending_updates": False})
+    offset = None
+    print("Menu bot শুরু হয়েছে...")
+    while True:
+        try:
+            payload = {"timeout": 30, "allowed_updates": ["message", "callback_query"]}
+            if offset is not None:
+                payload["offset"] = offset
+            res = tg_api("getUpdates", payload)
+            if not res or not res.get("ok"):
+                time.sleep(5)
+                continue
+            for upd in res.get("result", []):
+                offset = upd["update_id"] + 1
+                msg = upd.get("message")
+                if msg:
+                    txt = (msg.get("text") or "").strip().lower()
+                    if txt.startswith("/start") or txt.startswith("/menu"):
+                        tg_api("sendMessage", {
+                            "chat_id": msg["chat"]["id"],
+                            "text": MENU_TEXT,
+                            "parse_mode": "HTML",
+                            "reply_markup": menu_markup(),
+                        })
+                    continue
+                cb = upd.get("callback_query")
+                if not cb:
+                    continue
+                tg_api("answerCallbackQuery", {"callback_query_id": cb["id"]})
+                m = cb.get("message")
+                if not m:
+                    continue
+                data = cb.get("data") or ""
+                if data.startswith("s:") and data[2:].isdigit() and int(data[2:]) < len(MENU_SITES):
+                    site = MENU_SITES[int(data[2:])]
+                    text = site_history_text(site)
+                    markup = {"inline_keyboard": [[
+                        {"text": "🔄 Refresh", "callback_data": data},
+                        {"text": "⬅️ Back", "callback_data": "menu"},
+                    ]]}
+                else:
+                    text, markup = MENU_TEXT, menu_markup()
+                tg_api("editMessageText", {
+                    "chat_id": m["chat"]["id"],
+                    "message_id": m["message_id"],
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                    "reply_markup": markup,
+                })
+        except Exception as e:
+            print("Menu bot Error:", e)
+            time.sleep(5)
+
+
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
+    t17 = threading.Thread(target=run_menu_bot, daemon=True)
+    t17.start()
+
     t1 = threading.Thread(target=run_apucash, daemon=True)
     t1.start()
 
