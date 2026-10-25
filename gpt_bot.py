@@ -774,6 +774,17 @@ def fetch_goldtasker_offers():
         "Origin": "https://goldtasker.com",
     }
     resp = requests.get(GOLDTASKER_URL, headers=headers, timeout=15)
+    if resp.status_code != 200:
+        names = [c.split("=")[0].strip() for c in (GOLDTASKER_COOKIE or "").split(";")]
+        print(
+            "GoldTasker DEBUG:",
+            resp.status_code,
+            "server=", resp.headers.get("server"),
+            "cf-mitigated=", resp.headers.get("cf-mitigated"),
+            "cookie_names=", names,
+            "cookie_len=", len(GOLDTASKER_COOKIE or ""),
+            "body=", resp.text[:200].replace("\n", " "),
+        )
     resp.raise_for_status()
     data = resp.json()
     if isinstance(data, list):
