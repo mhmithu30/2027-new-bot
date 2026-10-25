@@ -1008,14 +1008,39 @@ def fetch_lootearn_offers():
             return found
         return []
 
-    items = find_items(data)
-    if not items:
+    items = []
+    if isinstance(data, dict) and isinstance(data.get("combinedData"), list):
+        items = data["combinedData"]
+    else:
+        items = find_items(data)
+    if items:
+        first = items[0] if isinstance(items[0], dict) else {}
+        print("LootEarn sample keys:", list(first.keys()), "| first type:", first.get("type"))
+    else:
         top = list(data.keys()) if isinstance(data, dict) else type(data).__name__
-        print("LootEarn: অফার লিস্ট পাওয়া যায়নি, top-level =", top)
+        print("LootEarn: লিস্ট খালি/পাওয়া যায়নি, top-level =", top)
     return items
 
 
+def lootearn_fields(item):
+    offer = item.get("offer_name") or item.get("offerName") or item.get("name")
+    partner = item.get("partners") or item.get("partner") or item.get("offerwallName") or item.get("wall")
+    reward = item.get("reward") or item.get("points") or item.get("amount") or item.get("coins") or 0
+    return offer, partner, reward
+
+
 def format_lootearn_message(item):
+    offer, partner, reward = lootearn_fields(item)
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> LootEarn\n"
+        f"🎯 <b>Offer:</b> {offer}\n"
+        f"🧱 <b>Network:</b> {partner}\n"
+        f"💰 <b>Reward:</b> {reward} coins"
+    )
+
+
+def _old_format_lootearn_message(item):
     return (
         f"🚀 <b>NEW LIVE LEAD</b>\n"
         f"🌐 <b>Website:</b> LootEarn\n"
@@ -1037,17 +1062,18 @@ def run_lootearn():
             print(f"LootEarn check: {len(items)} items")
             new_count = 0
             for item in items:
-                key = f"{item.get('type')}-{item.get('id')}-{item.get('offer_name')}"
+                offer_raw, partner_raw, reward_raw = lootearn_fields(item)
+                key = f"{item.get('type')}-{item.get('id')}-{offer_raw}"
                 if key in seen_ids:
                     continue
                 seen_ids.add(key)
 
-                if item.get("type") == "withdrawal" or not item.get("offer_name"):
+                if item.get("type") == "withdrawal" or not offer_raw:
                     continue
-                network = (item.get("partners") or "").lower()
-                offer = (item.get("offer_name") or "").lower()
+                network = (partner_raw or "").lower()
+                offer = (offer_raw or "").lower()
                 try:
-                    reward = float(item.get("reward") or 0)
+                    reward = float(reward_raw or 0)
                 except (TypeError, ValueError):
                     reward = 0
 
@@ -1056,7 +1082,7 @@ def run_lootearn():
                 if reward < 500:
                     continue
 
-                track_offer("LootEarn", item.get("offer_name"), reward)
+                track_offer("LootEarn", offer_raw, reward)
                 send_lead(format_lootearn_message(item))
                 new_count += 1
             if new_count:
