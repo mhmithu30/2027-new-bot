@@ -48,6 +48,10 @@ DOLLARPULL_SEEN_FILE = "dollarpull_seen_ids.json"
 LOOTEARN_URL = "https://lootearn.com/api/getWithdrawAndCompletedOffers"
 LOOTEARN_COOKIE = os.environ.get("LOOTEARN_COOKIE")
 LOOTEARN_SEEN_FILE = "lootearn_seen_ids.json"
+
+ZXAPI_URL = "https://zxearn.com/api/v1/public/live-activity"
+ZXAPI_TOKEN = os.environ.get("ZXEARN_TOKEN")
+ZXAPI_SEEN_FILE = "zxearn_api_seen_ids.json"
 # -----------------------------
 
 
@@ -1094,6 +1098,112 @@ def run_lootearn():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
+# ---------------- ZXEARN API (live-activity, bearer token) ----------------
+def load_zxapi_seen():
+    try:
+        with open(ZXAPI_SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    except FileNotFoundError:
+        return set()
+
+
+def save_zxapi_seen(seen_ids):
+    with open(ZXAPI_SEEN_FILE, "w") as f:
+        json.dump(list(seen_ids), f)
+
+
+def fetch_zxapi_items():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "application/json",
+        "Referer": "https://zxearn.com/earn",
+    }
+    if ZXAPI_TOKEN:
+        headers["Authorization"] = f"Bearer {ZXAPI_TOKEN}"
+    resp = requests.get(ZXAPI_URL, headers=headers, timeout=20)
+    if resp.status_code != 200:
+        print(
+            "ZxEarn API DEBUG:", resp.status_code,
+            "server=", resp.headers.get("server"),
+            "cf-mitigated=", resp.headers.get("cf-mitigated"),
+            "body=", resp.text[:300].replace("\n", " "),
+        )
+        resp.raise_for_status()
+    data = resp.json()
+
+    def find_items(node):
+        if isinstance(node, list):
+            if node and isinstance(node[0], dict) and "payout_points" in node[0]:
+                return node
+            for x in node:
+                r = find_items(x)
+                if r:
+                    return r
+        elif isinstance(node, dict):
+            for v in node.values():
+                r = find_items(v)
+                if r:
+                    return r
+        return []
+
+    items = find_items(data)
+    if not items:
+        top = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+        print("ZxEarn API: লিস্ট পাওয়া যায়নি, top-level =", top)
+    return items
+
+
+def format_zxapi_message(item):
+    return (
+        f"🚀 <b>NEW LIVE LEAD</b>\n"
+        f"🌐 <b>Website:</b> ZxEarn\n"
+        f"🎯 <b>Offer:</b> {item.get('offer_title')}\n"
+        f"🧱 <b>Source:</b> {item.get('source')}\n"
+        f"💰 <b>Reward:</b> {item.get('payout_points')} coins\n"
+        f"👤 <b>User:</b> {item.get('username')}"
+    )
+
+
+def run_zxearn_api():
+    print("ZxEarn API bot শুরু হয়েছে...")
+    seen_ids = load_zxapi_seen()
+    while True:
+        try:
+            items = fetch_zxapi_items()
+            print(f"ZxEarn API check: {len(items)} items, newest id {max((i.get('id') or 0) for i in items) if items else None}")
+            new_count = 0
+            for item in items:
+                iid = str(item.get("id"))
+                if iid in seen_ids:
+                    continue
+                seen_ids.add(iid)
+
+                kind = (item.get("kind") or "").lower()
+                if "withdraw" in kind or "cash" in kind:
+                    continue
+                source = (item.get("source") or "").lower()
+                title = (item.get("offer_title") or "").lower()
+                try:
+                    points = float(item.get("payout_points") or 0)
+                except (TypeError, ValueError):
+                    points = 0
+
+                if "cpx" in source or "cpx" in title or "theoremreach" in source or "theoremreach" in title:
+                    continue
+                if points < 500:
+                    continue
+
+                track_offer("ZxEarn", item.get("offer_title"), points)
+                send_lead(format_zxapi_message(item))
+                new_count += 1
+            if new_count:
+                save_zxapi_seen(seen_ids)
+                print(f"ZxEarn API: {new_count} টা নতুন অফার ধরা হয়েছে।")
+        except Exception as e:
+            print("ZxEarn API Error:", e)
+        time.sleep(CHECK_INTERVAL_SECONDS)
+
+
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
     t1 = threading.Thread(target=run_apucash, daemon=True)
@@ -1102,7 +1212,7 @@ if __name__ == "__main__":
     t2 = threading.Thread(target=run_jjreward, daemon=True)
     t2.start()
 
-    t3 = threading.Thread(target=run_zxearn, daemon=True)
+    t3 = threading.Thread(target=run_zxearn_api, daemon=True)
     t3.start()
 
     t4 = threading.Thread(target=run_speadearn, daemon=True)
