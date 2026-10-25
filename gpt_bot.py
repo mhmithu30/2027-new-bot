@@ -1329,10 +1329,17 @@ def _first(item, keys):
 
 
 def clickeran_fields(item):
-    offer = _first(item, ["offer_name", "offerName", "offer", "title", "name", "task"])
-    network = _first(item, ["partners", "partner", "network", "wall", "offerwall", "source", "provider"])
-    reward = _first(item, ["reward", "points", "amount", "coins", "payout", "payout_points"]) or 0
-    user = _first(item, ["username", "user_name", "user", "userName"])
+    # এই সাইটে অফারের নাম নেই, আছে নেটওয়ার্ক (name) আর offer_id
+    offer = _first(item, ["offer_name", "offerName", "title", "task"])
+    network = _first(item, ["partners", "partner", "network", "wall", "offerwall", "name", "source", "provider"])
+    if not offer:
+        oid = item.get("offer_id")
+        offer = f"{network} #{oid}" if oid is not None and network else (f"Offer #{oid}" if oid is not None else None)
+    reward = _first(item, ["request_amount", "reward", "points", "amount", "coins", "payout", "payout_points"]) or 0
+    user = item.get("user")
+    if isinstance(user, dict):
+        user = user.get("name")
+    user = user or _first(item, ["username", "user_name"])
     return offer, network, reward, user
 
 
@@ -1419,7 +1426,7 @@ def run_clickeran():
                 offer, network, reward_raw, user = clickeran_fields(item)
                 if not offer:
                     continue
-                kind = str(item.get("type") or item.get("kind") or "").lower()
+                kind = str(item.get("feed_type") or item.get("type") or item.get("kind") or "").lower()
                 if "withdraw" in kind or "cash" in kind:
                     continue
                 try:
