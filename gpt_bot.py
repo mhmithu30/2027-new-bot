@@ -5,7 +5,6 @@ import time
 import hashlib
 import threading
 import requests
-import socketio
 
 # ---------- CONFIG ----------
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -14,7 +13,6 @@ CHECK_INTERVAL_SECONDS = 60
 
 APUCASH_URL = "https://apucash.com"
 SEEN_IDS_FILE = "seen_ids.json"
-PAIDCASH_SOCKET_URL = "https://servers.faucetify.io"
 
 JJREWARD_URL = "https://www.jjreward.com/api/getWithdrawAndCompletedOffers"
 JJREWARD_COOKIE = os.environ.get("JJREWARD_COOKIE")
@@ -564,6 +562,9 @@ def run_mistcoins():
         try:
             items = fetch_mistcoins_activity()
             new_count = 0
+            unseen = [i for i in items if i.get("id") not in seen_ids]
+            top_id = max((i.get("id") or 0) for i in items) if items else None
+            print(f"MistCoins check: {len(items)} offers on page, {len(unseen)} unseen, newest id {top_id}")
             for item in items:
                 iid = item.get("id")
                 if iid in seen_ids:
@@ -829,81 +830,6 @@ def run_goldtasker():
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 
-# ---------------- PAIDCASH (socket.io live) ----------------
-sio = socketio.Client()
-
-
-@sio.event
-def connect():
-    print("PaidCash socket connected")
-
-
-@sio.event
-def connect_error(data):
-    print("PaidCash connect_error reason:", data)
-
-
-@sio.event
-def disconnect():
-    print("PaidCash disconnected, reconnecting...")
-
-
-@sio.on("activityFeed")
-def on_activity(data):
-    if data.get("feedType") != "earn":
-        return
-
-    wall = (data.get("wall") or "").lower()
-    coins = data.get("coins") or 0
-
-    if "cpx research" in wall or "theoremreach" in wall:
-        return
-    if coins < 500:
-        return
-
-    if True:
-        msg = (
-            f"🚀 <b>NEW LIVE LEAD</b>\n"
-            f"🌐 <b>Website:</b> PaidCash\n"
-            f"🎯 <b>Offer:</b> {data.get('offername')}\n"
-            f"🧱 <b>Network:</b> {data.get('wall')}\n"
-            f"💰 <b>Reward:</b> {data.get('coins')} coins\n"
-            f"👤 <b>User:</b> {data.get('username')}"
-        )
-        track_offer("PaidCash", data.get("offername"), coins)
-        send_lead(msg)
-        print("PaidCash: Sent -", data.get("offername"))
-
-
-def run_paidcash():
-    token = os.environ.get("PAIDCASH_TOKEN")
-    headers = {
-        "Origin": "https://paidcash.co",
-        "Referer": "https://paidcash.co/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    }
-    if token:
-        headers["Authorization"] = token
-    auth = {"token": token} if token else None
-    while True:
-        try:
-            sio.connect(
-                PAIDCASH_SOCKET_URL,
-                transports=["polling", "websocket"],
-                headers=headers,
-                auth=auth,
-                wait_timeout=15,
-            )
-            sio.wait()
-        except Exception as e:
-            print("PaidCash Error:", e)
-            try:
-                sio.disconnect()
-            except Exception:
-                pass
-            time.sleep(15)
-
-
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
     t1 = threading.Thread(target=run_apucash, daemon=True)
@@ -936,4 +862,5 @@ if __name__ == "__main__":
     t10 = threading.Thread(target=run_hourly_top_offer, daemon=True)
     t10.start()
 
-    run_paidcash()  # main thread এ চলবে
+    while True:  # main thread জীবিত রাখা
+        time.sleep(3600)
