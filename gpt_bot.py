@@ -876,12 +876,28 @@ def fetch_dollarpull_offers():
         )
         resp.raise_for_status()
     data = resp.json()
-    if isinstance(data, list):
-        return data
-    for key in ("data", "activities", "items", "results"):
-        if isinstance(data.get(key), list):
-            return data[key]
-    return []
+
+    def find_items(node):
+        # JSON এর যেকোনো গভীরতায় offerName সহ লিস্ট খোঁজা
+        if isinstance(node, list):
+            if node and isinstance(node[0], dict) and "offerName" in node[0]:
+                return node
+            for x in node:
+                r = find_items(x)
+                if r:
+                    return r
+        elif isinstance(node, dict):
+            for v in node.values():
+                r = find_items(v)
+                if r:
+                    return r
+        return []
+
+    items = find_items(data)
+    if not items:
+        top = list(data.keys()) if isinstance(data, dict) else type(data).__name__
+        print("DollarPull: অফার লিস্ট পাওয়া যায়নি, top-level =", top)
+    return items
 
 
 def format_dollarpull_message(item):
@@ -904,6 +920,7 @@ def run_dollarpull():
     while True:
         try:
             items = fetch_dollarpull_offers()
+            print(f"DollarPull check: {len(items)} items, newest id {items[0].get('id') if items else None}")
             new_count = 0
             for item in items:
                 iid = str(item.get("id"))
