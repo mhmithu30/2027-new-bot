@@ -14,7 +14,8 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 CHECK_INTERVAL_SECONDS = 60
 MIN_COINS = float(os.environ.get("MIN_COINS", "150"))  # সব সাইটের সর্বনিম্ন coin সীমা
 
-APUCASH_URL = "https://apucash.com"
+APUCASH_URL = "https://apucash.com/dashboard"
+APUCASH_COOKIE = os.environ.get("APUCASH_COOKIE")
 SEEN_IDS_FILE = "seen_ids.json"
 
 JJREWARD_URL = "https://www.jjreward.com/api/getWithdrawAndCompletedOffers"
@@ -206,22 +207,48 @@ def save_seen_ids(seen_ids):
         json.dump(list(seen_ids), f)
 
 
+apucash_session = requests.Session()
+APUCASH_CARD_RE = re.compile(r'<div class="lat-card">(.*?)</div>', re.DOTALL)
+
+
 def fetch_recent_winners():
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    resp = requests.get(APUCASH_URL, headers=headers, timeout=15)
-    resp.raise_for_status()
-    match = re.search(
-        r'<script data-page="app" type="application/json">(.*?)</script>',
-        resp.text,
-        re.DOTALL,
-    )
-    if not match:
-        print("Apucash: data-page JSON block পাওয়া যায়নি (site structure বদলেছে?)")
+    """ড্যাশবোর্ডের LIVE টিকার থেকে অফার বের করে (লগইন cookie লাগে)।"""
+    if not APUCASH_COOKIE:
+        print("Apucash: APUCASH_COOKIE সেট নেই, skip")
         return []
-    data = json.loads(match.group(1))
-    winners = data.get("props", {}).get("recentWinners", [])
-    newest = winners[0].get("id") if winners else None
-    print(f"Apucash check: {len(winners)} items, newest id {newest}")
+    if not apucash_session.cookies:
+        for part in APUCASH_COOKIE.split(";"):
+            if "=" in part:
+                k, v = part.strip().split("=", 1)
+                apucash_session.cookies.set(k, v, domain="apucash.com")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Referer": "https://apucash.com/dashboard",
+    }
+    resp = apucash_session.get(APUCASH_URL, headers=headers, timeout=15, allow_redirects=False)
+    if resp.status_code in (301, 302) or "/login" in resp.headers.get("Location", ""):
+        print("Apucash: login এ redirect হচ্ছে, cookie expired → নতুন APUCASH_COOKIE লাগবে")
+        return []
+    resp.raise_for_status()
+    cards = APUCASH_CARD_RE.findall(resp.text)
+    winners = []
+    for c in cards:
+        if "is-offer" not in c:
+            continue  # cashout বাদ
+        name = re.search(r'class="lat-name">(.*?)</span>', c)
+        amt = re.search(r'</i>\s*\+?([\d.,]+)\s*</span>', c)
+        srcm = re.search(r'class="lat-src">(.*?)</span>', c)
+        if not (name and amt and srcm):
+            continue
+        coins = float(amt.group(1).replace(",", ""))
+        source = srcm.group(1).strip()
+        uname = name.group(1).strip()
+        wid = hashlib.md5(f"{uname}|{coins}|{source}".encode()).hexdigest()
+        winners.append({"id": wid, "name": uname, "coins": coins, "source": source})
+    if not cards:
+        print("Apucash: ticker পাওয়া যায়নি (structure বদলেছে?)")
+    print(f"Apucash check: {len(winners)} offer items (ticker cards {len(cards)})")
     return winners
 
 
@@ -229,10 +256,9 @@ def format_apucash_message(winner):
     return (
         f"🚀 <b>NEW LIVE LEAD</b>\n"
         f"🌐 <b>Website:</b> Apucash\n"
-        f"🎯 <b>Offer:</b> {winner.get('source')}\n"
-        f"💰 <b>Reward:</b> {winner.get('coins')} coins\n"
-        f"👤 <b>User:</b> {winner.get('name')}\n"
-        f"⏰ <b>Time:</b> {winner.get('tooltip', {}).get('time')}"
+        f"🧱 <b>Network:</b> {winner.get('source')}\n"
+        f"💰 <b>Reward:</b> {int(winner.get('coins'))} coins\n"
+        f"👤 <b>User:</b> {winner.get('name')}"
     )
 
 
@@ -247,12 +273,10 @@ def run_apucash():
                 wid = winner.get("id")
                 if wid in seen_ids:
                     continue
-
-                seen_ids.add(wid)  # আগে চেক করা হয়ে গেছে, দ্বিতীয়বার আর দেখাবে না
+                seen_ids.add(wid)
 
                 source = (winner.get("source") or "").lower()
                 coins = winner.get("coins") or 0
-
                 if "cpx research" in source or "theoremreach" in source:
                     continue
                 if coins < MIN_COINS:
