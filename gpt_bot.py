@@ -216,9 +216,13 @@ def fetch_recent_winners():
         re.DOTALL,
     )
     if not match:
+        print("Apucash: data-page JSON block পাওয়া যায়নি (site structure বদলেছে?)")
         return []
     data = json.loads(match.group(1))
-    return data.get("props", {}).get("recentWinners", [])
+    winners = data.get("props", {}).get("recentWinners", [])
+    newest = winners[0].get("id") if winners else None
+    print(f"Apucash check: {len(winners)} items, newest id {newest}")
+    return winners
 
 
 def format_apucash_message(winner):
